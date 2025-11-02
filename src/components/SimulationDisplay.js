@@ -2,9 +2,10 @@ import React from 'react';
 import { Paper, Typography, Box } from '@mui/material';
 
 function SimulationDisplay({ circuit }) {
+  // --- MODIFIED: Added process.env.PUBLIC_URL to build the correct path ---
   const imagePath = circuit
-    ? `/images/${circuit.image}`
-    : '/images/placeholder.svg';
+    ? `${process.env.PUBLIC_URL}/images/${circuit.image}`
+    : `${process.env.PUBLIC_URL}/images/placeholder.svg`;
 
   return (
     <Paper sx={{ p: 2, height: '100%' }}>
@@ -30,7 +31,8 @@ function SimulationDisplay({ circuit }) {
           onError={(e) => {
             // Handle broken image link
             e.target.onerror = null;
-            e.target.src = '/images/placeholder.svg';
+            // --- MODIFIED: Also fix the error fallback path ---
+            e.target.src = `${process.env.PUBLIC_URL}/images/placeholder.svg`;
           }}
         />
       </Box>
