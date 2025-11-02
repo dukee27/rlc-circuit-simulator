@@ -1,8 +1,14 @@
 import { render, screen } from '@testing-library/react';
 import App from './App';
+import { ThemeProvider } from '@mui/material';
+import theme from './theme';
 
-test('renders learn react link', () => {
-  render(<App />);
-  const linkElement = screen.getByText(/learn react/i);
-  expect(linkElement).toBeInTheDocument();
+test('renders the simulator title', () => {
+  render(
+    <ThemeProvider theme={theme}>
+      <App />
+    </ThemeProvider>
+  );
+  const titleElement = screen.getByText(/Transient & Frequency Simulator/i);
+  expect(titleElement).toBeInTheDocument();
 });
