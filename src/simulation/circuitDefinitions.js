@@ -1,3 +1,4 @@
+//simulation/circuitDefinitions.js
 // NEW/UPDATED:
 // - CHANGED all `defaults` for L and C to be in BASE UNITS (H, F).
 // - Added correct "2nd order" transfer functions to the 3rd order circuits.

@@ -1,3 +1,4 @@
+//components/ImpedanceDisplay.js
 import React from 'react';
 import {
   Paper,

@@ -1,3 +1,4 @@
+//simulation/solver.js
 import { solveODE } from './numericalSolver';
 import { models } from './stateSpaceModels';
 
@@ -127,38 +128,81 @@ function solveFrequencyResponse(circuit, params) {
 }
 
 /**
- * Calculates poles and assesses stability for 2nd-order systems.
+ * --- NEW HELPER FUNCTION ---
+ * Calculates poles for a given circuit and params.
+ * @returns {Array} Array of pole objects [{re, im}, ...]
  */
-function calculatePolesAndStability(params) {
-  const { R, L, C } = params;
-  
-  if (!L || !C || L <= 0 || C <= 0) {
-    return { poles: [], stabilityStatus: { status: "N/A", details: "L or C is zero or negative." } };
+function _getPoles(circuit, params) {
+  const { R, L, C, L1, L2, C1, C2 } = params;
+  let poles = [];
+
+  // Use equivalent L and C for series circuits
+  let R_eq = R, L_eq = L, C_eq = C;
+  if (circuit.id.includes('rllc-series')) {
+    L_eq = L1 + L2;
+  } else if (circuit.id.includes('rlcc-series')) {
+    if(C1 + C2 > 0) C_eq = (C1 * C2) / (C1 + C2);
+    else C_eq = 0;
   }
 
-  // Standard 2nd order form: s^2 + (R/L)s + 1/(LC) = 0
-  const b = R / L;
-  const c = 1 / (L * C);
-  
-  const disc = b * b - 4 * c; // Discriminant
-  let roots = [];
+  if (circuit.id.includes('rlc-parallel')) {
+    // Parallel RLC poles: s^2 + (1/RC)s + 1/LC = 0
+    if (R > 0 && L > 0 && C > 0) {
+      const b_p = 1 / (R * C);
+      const c_p = 1 / (L * C);
+      const disc_p = b_p * b_p - 4 * c_p;
+      
+      if (disc_p >= 0) {
+          const r1 = (-b_p + Math.sqrt(disc_p)) / 2;
+          const r2 = (-b_p - Math.sqrt(disc_p)) / 2;
+          poles = [{ re: r1, im: 0 }, { re: r2, im: 0 }];
+      } else {
+          const realPart = -b_p / 2;
+          const imagPart = Math.sqrt(-disc_p) / 2;
+          poles = [{ re: realPart, im: imagPart }, { re: realPart, im: -imagPart }];
+      }
+    }
+  } else if (circuit.order === 2 || circuit.order === 3) {
+    // Series RLC-type poles: s^2 + (R/L)s + 1/(LC) = 0
+    if (L_eq > 0 && C_eq > 0) {
+      const b = R_eq / L_eq;
+      const c = 1 / (L_eq * C_eq);
+      
+      const disc = b * b - 4 * c; // Discriminant
 
-  if (disc >= 0) {
-      const r1 = (-b + Math.sqrt(disc)) / 2;
-      const r2 = (-b - Math.sqrt(disc)) / 2;
-      roots = [{ re: r1, im: 0 }, { re: r2, im: 0 }];
-  } else {
-      const realPart = -b / 2;
-      const imagPart = Math.sqrt(-disc) / 2;
-      roots = [{ re: realPart, im: imagPart }, { re: realPart, im: -imagPart }];
+      if (disc >= 0) {
+          const r1 = (-b + Math.sqrt(disc)) / 2;
+          const r2 = (-b - Math.sqrt(disc)) / 2;
+          poles = [{ re: r1, im: 0 }, { re: r2, im: 0 }];
+      } else {
+          const realPart = -b / 2;
+          const imagPart = Math.sqrt(-disc) / 2;
+          poles = [{ re: realPart, im: imagPart }, { re: realPart, im: -imagPart }];
+      }
+    }
   }
+  // Note: 1st order circuits don't have poles calculated this way (yet)
+  // We only care about 2nd order for locus plotting.
+  return poles;
+}
 
+
+/**
+ * Calculates poles and assesses stability for 2nd-order systems.
+ * --- UPDATED: This function is now just for stability string,
+ * pole calculation is in _getPoles ---
+ */
+function calculatePolesAndStability(params, poles) {
   // Assess stability
   let stabilityStatus = { status: "Stable", details: "All poles Re(p) < 0." };
   const tol = 1e-9;
   
+  if (!poles || poles.length === 0) {
+     return { stabilityStatus: { status: "N/A", details: "No poles calculated." } };
+  }
+
   let hasUnstablePole = false;
-  for (const p of roots) {
+  for (const p of poles) {
     if (p.re > tol) {
       stabilityStatus = { status: "Unstable", details: "At least one pole with Re(p) > 0." };
       hasUnstablePole = true;
@@ -167,7 +211,7 @@ function calculatePolesAndStability(params) {
   }
 
   if (!hasUnstablePole) {
-    const imagAxisPoles = roots.filter(p => Math.abs(p.re) <= tol);
+    const imagAxisPoles = poles.filter(p => Math.abs(p.re) <= tol);
     if (imagAxisPoles.length > 0) {
       const isRepeated = imagAxisPoles.length > 1 && (
         (Math.abs(imagAxisPoles[0].im - imagAxisPoles[1].im) < tol) ||
@@ -182,7 +226,72 @@ function calculatePolesAndStability(params) {
     }
   }
 
-  return { poles: roots, stabilityStatus };
+  return { stabilityStatus };
+}
+
+
+// --- NEW: Root Locus Solver ---
+
+/**
+ * Generates Root Locus data by varying one parameter.
+ * @param {object} circuit - The circuit definition.
+ * @param {object} baseParams - The current simulation parameters.
+ * @param {string} varyParam - The name of the parameter to vary (e.g., 'R', 'L', 'C').
+ * @param {number} min - The starting value for the parameter.
+ * @param {number} max - The ending value for the parameter.
+ * @param {number} [steps=100] - The number of steps to calculate.
+ * @returns {object} { traces: [ [{re, im}, ...], ... ], paramValues: [...] }
+ */
+export function calculateRootLocus(circuit, baseParams, varyParam, min, max, steps = 100) {
+  // Ensure we are only running on circuits that have poles
+  if (circuit.order < 2) {
+    return { traces: [], paramValues: [] };
+  }
+
+  const paramValues = [];
+  const allPoles = []; // This will be an array of pole arrays, e.g., [ [p1, p2], [p1, p2], ... ]
+
+  const stepSize = (max - min) / (steps - 1);
+
+  for (let i = 0; i < steps; i++) {
+    const currentVal = min + i * stepSize;
+    paramValues.push(currentVal);
+
+    // Create a temporary params object for this step
+    const tempParams = {
+      ...baseParams,
+      [varyParam]: currentVal,
+    };
+    
+    // Get the poles for these parameters
+    const poles = _getPoles(circuit, tempParams);
+    
+    // Sort poles to keep traces consistent (e.g., upper half-plane first)
+    poles.sort((a, b) => b.im - a.im);
+
+    allPoles.push(poles);
+  }
+
+  // Transpose the pole data to get traces
+  // E.g., from [ [p1, p2], [p1_next, p2_next] ]
+  // to:   trace1 = [p1, p1_next], trace2 = [p2, p2_next]
+  
+  const numTraces = allPoles[0] ? allPoles[0].length : 0;
+  if (numTraces === 0) {
+    return { traces: [], paramValues: [] };
+  }
+
+  const traces = Array(numTraces).fill(null).map(() => []);
+
+  for (const poleSet of allPoles) {
+    for (let i = 0; i < numTraces; i++) {
+      if (poleSet[i]) {
+        traces[i].push(poleSet[i]);
+      }
+    }
+  }
+
+  return { traces, paramValues };
 }
 
 
@@ -219,7 +328,7 @@ export function solve(circuit, params) {
     // --- 3. Generate Analysis & Final Value ---
     let analysis = "";
     let finalValue = 0;
-    let poles = null;
+    let poles = []; // <-- MODIFIED: Initialize
     let zeros = []; // <-- MODIFIED: Initialize zeros array
     let stabilityStatus = null;
     let tfString = null;
@@ -239,27 +348,17 @@ export function solve(circuit, params) {
         } else {
           C_eq = 0;
         }
-      } else if (circuit.id.includes('rlc-parallel')) {
+      }
+      
+      // --- UPDATED: Use new _getPoles helper ---
+      poles = _getPoles(circuit, params);
+
+      if (circuit.id.includes('rlc-parallel')) {
         // Parallel RLC poles are different: s^2 + (1/RC)s + 1/LC = 0
         if (R_eq > 0 && L_eq > 0 && C_eq > 0) {
-          const b_p = 1 / (R_eq * C_eq);
-          const c_p = 1 / (L_eq * C_eq);
-          const disc_p = b_p * b_p - 4 * c_p;
-          
-          if (disc_p >= 0) {
-              const r1 = (-b_p + Math.sqrt(disc_p)) / 2;
-              const r2 = (-b_p - Math.sqrt(disc_p)) / 2;
-              poles = [{ re: r1, im: 0 }, { re: r2, im: 0 }];
-          } else {
-              const realPart = -b_p / 2;
-              const imagPart = Math.sqrt(-disc_p) / 2;
-              poles = [{ re: realPart, im: imagPart }, { re: realPart, im: -imagPart }];
-          }
           // Manually run stability check for parallel
-          stabilityStatus = { status: "Stable", details: "All poles Re(p) < 0." };
-          if (poles.some(p => p.re > 1e-9)) {
-            stabilityStatus = { status: "Unstable", details: "At least one pole with Re(p) > 0." };
-          }
+          const pzAnalysis = calculatePolesAndStability(params, poles); // Get stability
+          stabilityStatus = pzAnalysis.stabilityStatus;
           
           // Analysis string for parallel (UPDATED with MathJax)
           const zeta_p = (1 / (2 * R_eq)) * Math.sqrt(L_eq / C_eq);
@@ -270,8 +369,8 @@ export function solve(circuit, params) {
 
       // For all SERIES 2nd order circuits
       if (!circuit.id.includes('rlc-parallel') && R_eq > 0 && L_eq > 0 && C_eq > 0) {
-        const pzAnalysis = calculatePolesAndStability({ R: R_eq, L: L_eq, C: C_eq });
-        poles = pzAnalysis.poles;
+        // --- UPDATED: Pass poles to stability function ---
+        const pzAnalysis = calculatePolesAndStability({ R: R_eq, L: L_eq, C: C_eq }, poles);
         stabilityStatus = pzAnalysis.stabilityStatus;
         
         const alpha = R_eq / (2 * L_eq);

@@ -1,3 +1,4 @@
+//components/ControlPanel.js
 import React from 'react';
 import {
   Box,
@@ -22,6 +23,7 @@ import SaveAltIcon from '@mui/icons-material/SaveAlt';
 import FileOpenIcon from '@mui/icons-material/FileOpen';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import SummarizeIcon from '@mui/icons-material/Summarize';
+import AutoGraphIcon from '@mui/icons-material/AutoGraph'; // <-- NEW ICON
 import { saveConfigToFile } from '../simulation/fileUtils';
 
 // Helper to get units for parameters
@@ -86,10 +88,17 @@ function ControlPanel(props) {
     onConfigLoad,
     onExportCSV,
     onExportReport, // <-- ADDED
-    simResult
+    simResult,
+    
+    // --- NEW: Locus props ---
+    locusParams,
+    locusStatus,
+    onLocusParamChange,
+    onGenerateLocus,
+    currentCircuit // We now receive this from App.js
   } = props;
 
-  const currentCircuit = allCircuits[circuitId];
+  // const currentCircuit = allCircuits[circuitId]; // This is now passed in
 
   // Group circuits by order
   const circuitGroups = Object.entries(allCircuits).reduce((acc, [id, def]) => {
@@ -122,6 +131,26 @@ function ControlPanel(props) {
     solverParams.inputType = inputType;
     onSimulate(solverParams);
   };
+  
+  // --- NEW: Handler for locus UI fields ---
+  const handleLocusUIChange = (e) => {
+    const { name, value } = e.target;
+    // Special handling for min/max (numbers)
+    if (name === 'min' || name === 'max') {
+      const numVal = parseFloat(value);
+      onLocusParamChange(name, isNaN(numVal) ? 0 : numVal);
+    } else {
+      onLocusParamChange(name, value);
+    }
+  };
+  
+  // --- NEW: Get relevant params for locus dropdown ---
+  // Only 2nd order circuits have locus
+  const showLocus = currentCircuit.order === 2 || currentCircuit.order === 3;
+  // Get component params (R, L, C etc.)
+  const locusParamOptions = currentCircuit.params.filter(p => 
+    p.startsWith('R') || p.startsWith('L') || p.startsWith('C')
+  );
 
   const handleSaveConfig = () => {
     // Config should save in UI units for readability
@@ -347,6 +376,96 @@ function ControlPanel(props) {
         </Grid>
       </Box>
 
+      {/* --- NEW: Root Locus Section --- */}
+      {showLocus && (
+        <>
+          <Divider sx={{ my: 3 }} />
+          <Box>
+            <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
+              <AutoGraphIcon sx={{ mb: -0.5, mr: 1, color: 'primary.main' }} />
+              Root Locus Analysis
+            </Typography>
+            <Grid container spacing={2}>
+              <Grid item xs={12}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Vary Parameter</InputLabel>
+                  <Select
+                    name="vary"
+                    value={locusParams.vary}
+                    label="Vary Parameter"
+                    onChange={handleLocusUIChange}
+                  >
+                    {locusParamOptions.map((p) => (
+                      <MenuItem key={p} value={p}>{p} ({getUnit(p)})</MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid item xs={6}>
+                <TextField
+                  label="Min Value"
+                  name="min"
+                  type="number"
+                  value={locusParams.min}
+                  onChange={handleLocusUIChange}
+                  fullWidth
+                  size="small"
+                  sx={hideSpinners}
+                  InputProps={{
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <Typography variant="body2" color="text.secondary">
+                          {getUnit(locusParams.vary)}
+                        </Typography>
+                      </InputAdornment>
+                    ),
+                  }}
+                />
+              </Grid>
+              <Grid item xs={6}>
+                <TextField
+                  label="Max Value"
+                  name="max"
+                  type="number"
+                  value={locusParams.max}
+                  onChange={handleLocusUIChange}
+                  fullWidth
+                  size="small"
+                  sx={hideSpinners}
+                  InputProps={{
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <Typography variant="body2" color="text.secondary">
+                          {getUnit(locusParams.vary)}
+                        </Typography>
+                      </InputAdornment>
+                    ),
+                  }}
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <Button
+                  variant="contained"
+                  color="secondary"
+                  fullWidth
+                  startIcon={
+                    locusStatus === 'running' ? (
+                      <CircularProgress size={20} color="inherit" />
+                    ) : (
+                      <AutoGraphIcon />
+                    )
+                  }
+                  onClick={onGenerateLocus}
+                  disabled={locusStatus === 'running' || simStatus === 'running'}
+                >
+                  {locusStatus === 'running' ? 'Generating...' : 'Generate Locus'}
+                </Button>
+              </Grid>
+            </Grid>
+          </Box>
+        </>
+      )}
+
       {/* --- Manage & Export Section --- */}
       <Divider sx={{ my: 3 }} />
       <Box>
@@ -424,7 +543,7 @@ function ControlPanel(props) {
             )
           }
           onClick={handleLocalSimulate}
-          disabled={simStatus === 'running'}
+          disabled={simStatus === 'running' || locusStatus === 'running'} // <-- UPDATED
         >
           {simStatus === 'running' ? 'Simulating...' : 'Run Simulation'}
         </Button>

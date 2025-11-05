@@ -1,3 +1,4 @@
+//App.js
 import React, { useState, useMemo } from 'react';
 import {
   Container,
@@ -7,7 +8,7 @@ import {
   Alert,
 } from '@mui/material';
 import { circuitDefinitions } from './simulation/circuitDefinitions';
-import { solve } from './simulation/solver';
+import { solve, calculateRootLocus } from './simulation/solver';
 import { useLogger } from './hooks/useLogger';
 import { exportResultsToCSV, exportReportToHTML } from './simulation/fileUtils';
 import ControlPanel from './components/ControlPanel';
@@ -51,6 +52,15 @@ function App() {
   const [simError, setSimError] = useState(null);
   const { logs, addLog } = useLogger();
 
+  // --- NEW: State for Root Locus ---
+  const [locusParams, setLocusParams] = useState({
+    vary: 'R',
+    min: 1,
+    max: 1000,
+  });
+  const [locusResult, setLocusResult] = useState(null);
+  const [locusStatus, setLocusStatus] = useState('ready'); // ready, running
+
   const currentCircuit = useMemo(
     () => ({
       ...circuitDefinitions[circuitId],
@@ -67,6 +77,7 @@ function App() {
     setParams(newCircuit.defaults); // Already in base units
     setInputType(newCircuit.inputType[0]); 
     setSimResult(null);
+    setLocusResult(null); // <-- NEW: Clear locus on circuit change
     setSimError(null);
     setSimStatus('ready');
     addLog(`Circuit changed to: ${newCircuit.label}`);
@@ -77,6 +88,14 @@ function App() {
     setParams((prev) => ({
       ...prev,
       [name]: value,
+    }));
+  };
+
+  // --- NEW: Handler for locus param changes ---
+  const handleLocusParamChange = (name, value) => {
+    setLocusParams(prev => ({
+      ...prev,
+      [name]: value
     }));
   };
 
@@ -96,6 +115,7 @@ function App() {
 
     setParams(newDefaults);
     setSimResult(null);
+    setLocusResult(null); // <-- NEW: Clear locus on input change
     setSimError(null);
     setSimStatus('ready');
   };
@@ -103,6 +123,7 @@ function App() {
   const handleSimulate = (solverParams) => {
     setSimStatus('running');
     setSimResult(null);
+    setLocusResult(null); // <-- NEW: Clear locus on new simulation
     setSimError(null);
     addLog(`Running ${inputType} simulation for ${currentCircuit.label}...`);
 
@@ -124,6 +145,53 @@ function App() {
       }
     }, 500); 
   };
+  
+  // --- NEW: Handler for generating root locus ---
+  const handleGenerateLocus = () => {
+    if (currentCircuit.order < 2) {
+      addLog('Root Locus is only available for 2nd order circuits.');
+      return;
+    }
+    
+    setLocusStatus('running');
+    setLocusResult(null);
+    addLog(`Generating Root Locus, varying ${locusParams.vary}...`);
+
+    // Run async
+    setTimeout(() => {
+      try {
+        // We must convert L/C min/max (which are in mH/µF) to base units
+        const { vary, min, max } = locusParams;
+        let minBase = min;
+        let maxBase = max;
+        
+        if (vary.startsWith('L')) { // mH -> H
+          minBase = min / 1000;
+          maxBase = max / 1000;
+        } else if (vary.startsWith('C')) { // µF -> F
+          minBase = min / 1000000;
+          maxBase = max / 1000000;
+        }
+
+        const result = calculateRootLocus(
+          currentCircuit, 
+          params, // Use current params as base
+          vary,
+          minBase,
+          maxBase,
+          100 // Number of steps
+        );
+        
+        setLocusResult(result);
+        setLocusStatus('ready');
+        addLog('Root Locus generation complete.');
+      } catch (err) {
+        addLog(`Error generating Root Locus: ${err.message}`);
+        setLocusStatus('ready');
+        setSimError(`Error generating Root Locus: ${err.message}`);
+      }
+    }, 200); // Short delay
+  };
 
   // --- UPDATED: `config.params` are now base units from ControlPanel ---
   const handleConfigLoad = (config) => {
@@ -131,6 +199,7 @@ function App() {
     setInputType(config.inputType);
     setParams(config.params); // Already in base units
     setSimResult(null);
+    setLocusResult(null); // <-- NEW: Clear locus on config load
     setSimError(null);
     setSimStatus('ready');
     addLog(`Loaded configuration for ${circuitDefinitions[config.circuitId].label}.`);
@@ -165,7 +234,7 @@ function App() {
   return (
     <Container maxWidth="xl" sx={{ my: 3 }}>
       <Typography variant="h4" component="h1" gutterBottom align="center">
-        RLC Circuit - Impedance Analysis
+        RLC Circuit - Analysis
       </Typography>
 
       <Grid container spacing={3}>
@@ -185,6 +254,13 @@ function App() {
             onExportCSV={handleExportCSV}
             onExportReport={handleExportReport}
             simResult={simResult}
+
+            // --- NEW PROPS ---
+            locusParams={locusParams}
+            locusStatus={locusStatus}
+            onLocusParamChange={handleLocusParamChange}
+            onGenerateLocus={handleGenerateLocus}
+            currentCircuit={currentCircuit} // Pass currentCircuit
           />
           
           {/* Impedance Metrics (only shows for Sine) */}
@@ -227,6 +303,8 @@ function App() {
                 circuit={currentCircuit}
                 result={simResult}
                 status={simStatus}
+                // --- NEW PROPS ---
+                locusResult={locusResult}
               />
             </Grid>
           </Grid>

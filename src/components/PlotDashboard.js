@@ -1,3 +1,4 @@
+//components/PlotDashboard.js
 import React, { useState } from 'react';
 import { Paper, Typography, Box, Grid, Tabs, Tab } from '@mui/material';
 import Plot from 'react-plotly.js';
@@ -88,9 +89,9 @@ const getPoleZeroData = (poles, zeros) => {
   return data;
 };
 
-const getPoleZeroLayout = () => ({
+const getPoleZeroLayout = (title = 'Pole-Zero Map') => ({ // <-- Added title param
   ...plotlyLayout,
-  title: { text: 'Pole-Zero Map', font: { size: 16, color: '#ecf0f1' } },
+  title: { text: title, font: { size: 16, color: '#ecf0f1' } },
   xaxis: { 
     title: 'Real Axis (σ)', 
     gridcolor: '#34495e', 
@@ -116,12 +117,82 @@ const getPoleZeroLayout = () => ({
 // --- End of Modified Functions ---
 
 
-function PlotDashboard({ circuit, result, status }) {
+// --- NEW: Root Locus Plot Functions ---
+const getRootLocusData = (locusResult, currentPoles, currentZeros) => {
+  let data = [];
+
+  // 1. Add the locus traces
+  if (locusResult && locusResult.traces) {
+    locusResult.traces.forEach((trace, index) => {
+      data.push({
+        x: trace.map(p => p.re),
+        y: trace.map(p => p.im),
+        mode: 'lines',
+        type: 'scatter',
+        name: `Locus ${index + 1}`,
+        line: { color: 'cyan', width: 2 }
+      });
+      
+      // Add start (K=min) and end (K=max) points
+      data.push({
+         x: [trace[0].re],
+         y: [trace[0].im],
+         mode: 'markers',
+         type: 'scatter',
+         name: 'Start (K=min)',
+         marker: { color: 'lime', size: 10, symbol: 'cross' }
+      });
+      data.push({
+         x: [trace[trace.length - 1].re],
+         y: [trace[trace.length - 1].im],
+         mode: 'markers',
+         type: 'scatter',
+         name: 'End (K=max)',
+         marker: { color: 'magenta', size: 10, symbol: 'x' }
+      });
+    });
+  }
+  
+  // 2. Add the *current* poles and zeros on top
+  const pzData = getPoleZeroData(currentPoles, currentZeros);
+  data = [...data, ...pzData];
+  
+  // 3. Rename "Poles" from pzData to "Current Poles"
+  const currentPolesTrace = data.find(d => d.name === 'Poles');
+  if (currentPolesTrace) {
+    currentPolesTrace.name = 'Current Poles';
+    currentPolesTrace.marker.size = 18; // Make them bigger
+  }
+
+  return data;
+};
+
+const getRootLocusLayout = () => {
+  const layout = getPoleZeroLayout('Root Locus Plot'); // Reuse PZ layout
+  layout.legend.y = -0.4; // Adjust legend
+  return layout;
+};
+// --- End of New Functions ---
+
+
+function PlotDashboard({ circuit, result, status, locusResult }) { // <-- NEW PROP
   const [tab, setTab] = useState(0);
 
   const handleChange = (event, newValue) => {
     setTab(newValue);
   };
+  
+  // Reset tab if the old tab disappears (e.g. locusResult becomes null)
+  React.useEffect(() => {
+    const hasPoleZero = (result?.poles && result.poles.length > 0) || (result?.zeros && result.zeros.length > 0);
+    if (tab === 3 && !locusResult) {
+      setTab(0);
+    }
+    if (tab === 2 && !hasPoleZero) {
+      setTab(0);
+    }
+  }, [locusResult, result, tab]);
+
 
   if (status === 'ready' || status === 'running') {
     return (
@@ -139,6 +210,9 @@ function PlotDashboard({ circuit, result, status }) {
   
   // --- MODIFIED: Check for poles OR zeros ---
   const hasPoleZero = (result.poles && result.poles.length > 0) || (result.zeros && result.zeros.length > 0);
+  
+  // --- NEW: Check for locus ---
+  const hasLocus = locusResult && locusResult.traces.length > 0;
 
   return (
     <Paper sx={{ p: 2 }}>
@@ -147,6 +221,7 @@ function PlotDashboard({ circuit, result, status }) {
           <Tab label="Time Domain" />
           <Tab label="Frequency Domain" />
           {hasPoleZero && <Tab label="Pole-Zero Plot" />}
+          {hasLocus && <Tab label="Root Locus" />} {/* <-- NEW TAB */}
         </Tabs>
       </Box>
 
@@ -220,7 +295,26 @@ function PlotDashboard({ circuit, result, status }) {
               <Box sx={{ border: '1px solid #34495e', borderRadius: 1 }}>
                 <Plot
                   data={getPoleZeroData(result.poles, result.zeros)} 
-                  layout={getPoleZeroLayout()}
+                  layout={getPoleZeroLayout()} // <-- Uses default title
+                  useResizeHandler={true}
+                  style={{ width: '100%', height: '450px' }}
+                  config={{ responsive: true, displaylogo: false }}
+                />
+              </Box>
+            </Grid>
+          </Grid>
+        </Box>
+      )}
+
+      {/* --- NEW: Root Locus Plot (Tab 3) --- */}
+      {hasLocus && (
+        <Box hidden={tab !== 3} sx={{ pt: 3 }}>
+          <Grid container spacing={3}>
+            <Grid item xs={12} lg={8} sx={{ margin: 'auto' }}>
+              <Box sx={{ border: '1px solid #34495e', borderRadius: 1 }}>
+                <Plot
+                  data={getRootLocusData(locusResult, result.poles, result.zeros)} 
+                  layout={getRootLocusLayout()}
                   useResizeHandler={true}
                   style={{ width: '100%', height: '450px' }}
                   config={{ responsive: true, displaylogo: false }}

@@ -1,3 +1,4 @@
+//components/SimulationDisplay.js
 import React from 'react';
 import { Paper, Typography, Box } from '@mui/material';
 

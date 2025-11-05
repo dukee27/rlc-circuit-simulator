@@ -1,3 +1,4 @@
+//components/LogConsole.js
 import React, { useRef, useEffect } from 'react';
 import { Paper, Typography, Box } from '@mui/material';
 

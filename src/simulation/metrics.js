@@ -1,3 +1,4 @@
+// simulation/metrics.js
 /**
  * Finds the time a signal first crosses a target value.
  * @param {number[]} time - The time array.

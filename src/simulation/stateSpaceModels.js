@@ -1,3 +1,4 @@
+//simulation/stateSpaceModels.js
 /**
  * Gets the input voltage at a given time `t`.
  * @param {number} t - Current time.
